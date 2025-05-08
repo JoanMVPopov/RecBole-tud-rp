@@ -1,0 +1,27 @@
+# --- data ---
+field_separator: "\t"
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+TIME_FIELD: timestamp
+
+kg_field_separator: "\t"
+ENTITY_ID_FIELD: entity_id
+RELATION_ID_FIELD: relation_id
+
+# --- training ---
+epochs: 40
+train_batch_size: 2048
+eval_batch_size: 4096
+neg_sampling:    # full-sort eval
+    +: full
+
+# --- evaluation ---
+eval_args:
+    split:  {'RS': [0.8, 0.1, 0.1]}
+    order:  RO
+    mode:   full
+topk: 10
+metrics: ['Recall', 'NDCG']   # RecBole’s internal metrics – keep them for Info
+
+# fix randomness
+seed: 42
