@@ -1,19 +1,28 @@
-# --- data ---
-field_separator: "\t"
+## --- data ---
+# dataloaders saving does not seem to work well with knowledge-based models
+#save_dataset: True
+#save_dataloaders: True
+
+## NEEDED FOR KG/HYBRID MODELS
 USER_ID_FIELD: user_id
 ITEM_ID_FIELD: item_id
-TIME_FIELD: timestamp
-
-kg_field_separator: "\t"
-ENTITY_ID_FIELD: entity_id
+HEAD_ENTITY_ID_FIELD: head_id
+TAIL_ENTITY_ID_FIELD: tail_id
 RELATION_ID_FIELD: relation_id
+ENTITY_ID_FIELD: entity_id
+RATING_FIELD: rating
+load_col:
+    inter: [user_id, item_id, rating]
+    user : [user_id, gender]
+    kg: [head_id, relation_id, tail_id]
+    link: [item_id, entity_id]
 
 # --- training ---
-epochs: 40
+epochs: 100
 train_batch_size: 2048
 eval_batch_size: 4096
-neg_sampling:    # full-sort eval
-    +: full
+#neg_sampling:    # full-sort eval
+#    +: full
 
 # --- evaluation ---
 eval_args:
@@ -21,7 +30,8 @@ eval_args:
     order:  RO
     mode:   full
 topk: 10
-metrics: ['Recall', 'NDCG']   # RecBole’s internal metrics – keep them for Info
+#metrics: ['Recall', 'NDCG']   # RecBole’s internal metrics – keep them for Info
 
 # fix randomness
 seed: 42
+repeatable: True

@@ -164,11 +164,19 @@ def run_recbole(
     logger.info(set_color("test result", "yellow") + f": {test_result}")
 
     result = {
+        "config": config,
+        "model": model,
+        # "dataset": dataset,
+        "trainer": trainer,
         "best_valid_score": best_valid_score,
         "valid_score_bigger": config["valid_metric_bigger"],
         "best_valid_result": best_valid_result,
         "test_result": test_result,
     }
+
+    import pickle
+    with open('split_data.pth', 'wb') as f:
+        pickle.dump(test_data, f)
 
     if not config["single_spec"]:
         dist.destroy_process_group()
