@@ -3,6 +3,8 @@
 #save_dataset: True
 #save_dataloaders: True
 
+use_gpu: True
+
 ## NEEDED FOR KG/HYBRID MODELS
 USER_ID_FIELD: user_id
 ITEM_ID_FIELD: item_id
@@ -49,6 +51,8 @@ metrics: ["Recall", "MRR", "NDCG", "Hit", "MAP", "Precision", "GAUC",
           "TailPercentage", "GiniIndex", "PopularityPercentage",
           "DifferentialFairness" ,"ValueUnfairness", "AbsoluteUnfairness",
           "UnderUnfairness", "OverUnfairness", "NonParityUnfairness"]
+#          "AbsDiffHit", "ExposurePop", "ExposureTail"]
+#          "KSDistance", "MAEGap", "VarErr"]
 
 # fix randomness
 seed: 42

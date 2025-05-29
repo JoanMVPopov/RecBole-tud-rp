@@ -1,5 +1,8 @@
 
 import sys, os
+
+import torch
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from recbole.config import Config
@@ -19,4 +22,6 @@ if __name__ == "__main__":
     #     dataset='ml-100k',
     # )
 
-    run_recbole(model='CKE', dataset='ml-100k', config_file_list=['conf/model_kg.yaml'])
+    print(torch.cuda.is_available())
+
+    #run_recbole(model='CKE', dataset='ml-100k', config_file_list=['conf/model_kg.yaml'])

@@ -40,11 +40,17 @@ class WandbLogger(object):
 
             self._set_steps()
 
-    def log_metrics(self, metrics, head="train", commit=True):
+    def log_metrics(self, metrics, head="train", commit=True, step=-1):
         if self.log_wandb:
-            if head:
-                metrics = self._add_head_to_metrics(metrics, head)
-                self._wandb.log(metrics, commit=commit)
+            # if head:
+            #     metrics = self._add_head_to_metrics(metrics, head)
+            #     print(metrics)
+            #     self._wandb.log(metrics, commit=commit)
+            # else:
+            #     self._wandb.log(metrics, commit=commit)
+
+            if step >= 0:
+                self._wandb.log(metrics, commit=commit, step=step)
             else:
                 self._wandb.log(metrics, commit=commit)
 
@@ -54,11 +60,17 @@ class WandbLogger(object):
             for k, v in metrics.items():
                 self._wandb.run.summary[k] = v
 
+    # def _set_steps(self):
+    #     self._wandb.define_metric("train/*", step_metric="train_step")
+    #     self._wandb.define_metric("valid/*", step_metric="valid_step")
+
     def _set_steps(self):
-        self._wandb.define_metric("train/*", step_metric="train_step")
-        self._wandb.define_metric("valid/*", step_metric="valid_step")
+        self._wandb.define_metric("train/*", step_metric="epoch")
+        self._wandb.define_metric("valid/*", step_metric="epoch")
 
     def _add_head_to_metrics(self, metrics, head):
+        print(head)
+        print(metrics)
         head_metrics = dict()
         for k, v in metrics.items():
             if "_step" in k:

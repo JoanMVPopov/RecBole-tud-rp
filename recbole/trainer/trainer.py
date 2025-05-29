@@ -449,10 +449,22 @@ class Trainer(AbstractTrainer):
             if verbose:
                 self.logger.info(train_loss_output)
             self._add_train_loss_to_tensorboard(epoch_idx, train_loss)
-            self.wandblogger.log_metrics(
-                {"epoch": epoch_idx, "train_loss": train_loss, "train_step": epoch_idx},
-                head="train",
-            )
+            # self.wandblogger.log_metrics(
+            #     {"epoch": epoch_idx, "train_loss": train_loss, "train_step": epoch_idx},
+            #     head="train",
+            # )
+            # — log training loss per epoch —
+            train_metrics = {}
+
+            if isinstance(train_loss, tuple):
+                # split tuple into multiple curves
+                for idx, l in enumerate(train_loss, start=1):
+                    train_metrics[f"train/loss_{idx}"] = l
+            else:
+                train_metrics["train/loss"] = train_loss
+            # force x-axis = epoch
+            #train_metrics["epoch"] = epoch_idx
+            #self.wandblogger.log_metrics(train_metrics, head="train", step=epoch_idx)
 
             # eval
             if self.eval_step <= 0 or not valid_data:
@@ -493,9 +505,20 @@ class Trainer(AbstractTrainer):
                     self.logger.info(valid_score_output)
                     self.logger.info(valid_result_output)
                 self.tensorboard.add_scalar("Vaild_score", valid_score, epoch_idx)
-                self.wandblogger.log_metrics(
-                    {**valid_result, "valid_step": valid_step}, head="valid"
-                )
+
+                # self.wandblogger.log_metrics(
+                #     {**valid_result, "valid_step": valid_step}, head="valid"
+                # )
+
+                valid_result_updated = {}
+
+                for k,v in valid_result.items():
+                    if "recall" in k:
+                        valid_result_updated[f"Recall@10"] = v
+                    valid_result_updated[f"valid/{k}"] = v
+
+                # NEED A SINGLE LOGGER FOR BOTH train loss and validation results
+                self.wandblogger.log_metrics({**valid_result_updated, **train_metrics}, step=epoch_idx)
 
                 if update_flag:
                     if saved:
@@ -580,7 +603,7 @@ class Trainer(AbstractTrainer):
 
         if load_best_model:
             checkpoint_file = model_file or self.saved_model_file
-            checkpoint = torch.load(checkpoint_file, map_location=self.device)
+            checkpoint = torch.load(checkpoint_file, map_location=self.device, weights_only=False)
             self.model.load_state_dict(checkpoint["state_dict"])
             self.model.load_other_parameter(checkpoint.get("other_parameter"))
             message_output = "Loading model structure and parameters from {}".format(

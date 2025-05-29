@@ -275,13 +275,15 @@ def train():
     wandb.init()
     cfg = wandb.config
 
+    print(torch.cuda.is_available())
+
     config_dict = {
         "learning_rate": cfg.learning_rate,
         "train_batch_size": cfg.train_batch_size,
         "kg_embedding_size": cfg.kg_embedding_size,
         "embedding_size": cfg.embedding_size,
         "reg_weights": cfg.reg_weights,
-        "device": "cuda" if torch.cuda.is_available() else "cpu"  # Add this line
+        "use_gpu": True if torch.cuda.is_available() else False  # Add this line
     }
 
     # -- translate wandb.config into RecBole Config --
@@ -307,14 +309,6 @@ def train():
     # trainer loading and initialization
     trainer = get_trainer(config["MODEL_TYPE"], config["model"])(config, model)
 
-    # model = CKE(config, dataset).to(config['device'])
-    # trainer = Trainer(config, model)
-
-    # max_epoch = config['epochs']
-    # history = defaultdict(list)
-
-    # rating_losses, struct_losses, semantic_losses = [], [], []
-
     # --- train & validate with built-in fit() ---
     best_valid_score, best_valid_result = trainer.fit(
         train_data=train_data,
@@ -328,85 +322,13 @@ def train():
     test_result = trainer.evaluate(test_data, load_best_model=True, show_progress=config["show_progress"])
     print(f"Test result: {test_result}")
 
-    # for epoch in range(1, max_epoch + 1):
-    #     print(f"\n>>> Epoch {epoch}/{max_epoch}")
-    #
-    #     # — TRAIN —
-    #     train_data.set_mode(KGDataLoaderState.RSKG)
-    #     train_loss = trainer._train_epoch(train_data, epoch)
-    #
-    #     # unpack and store the losses (it's a 3-tuple)
-    #     r_loss, s_loss, se_loss = train_loss
-    #     rating_losses.append(r_loss)
-    #     struct_losses.append(s_loss)
-    #     semantic_losses.append(se_loss)
-    #
-    #     # — VALIDATE
-    #     valid_score, valid_result = trainer._valid_epoch(valid_data, epoch)
-    #     #print(valid_result)
-    #
-    #     # — FAIRNESS —
-    #     metrics = evaluate_fairness(config, model, dataset, train_data, valid_data, K=10)
-    #     for name, val in metrics.items():
-    #         history[name].append(val)
-    #
-    #     # – LOG to W&B –
-    #     log_dict = {
-    #         'train/rating_loss': r_loss,
-    #         'train/struct_loss': s_loss,
-    #         'train/semantic_loss': se_loss,
-    #     }
-    #     # prefix all validation metrics with 'valid/'
-    #     for k, v in valid_result.items():
-    #         # if k not in fairness_metrics:
-    #         #     log_dict[f'accuracy_valid/{k}'] = v
-    #         # else:
-    #         #     log_dict[f'fairness_valid/{k}'] = v
-    #         # if "Recall" in k:
-    #         #     log_dict['Recall@10'] = v
-    #         ####
-    #         log_dict[f'accuracy_valid/{k}'] = v
-    #         if "Recall" in k:
-    #             log_dict['Recall@10'] = v
-    #     # prefix all fairness metrics with 'fair/{metric_name}'
-    #     for k, v in metrics.items():
-    #         log_dict[f'fairness_valid/{k}'] = v
-    #
-    #     wandb.log(log_dict, step=epoch)
+    wandb.finish()
 
-    # ---------------------------
-    # 4) plot
-    # ---------------------------
-    # epochs = list(range(1, max_epoch + 1))
-    # current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # run_id = wandb.run.id
-    # fig_dir = os.path.join('figures', run_id)
-    # os.makedirs(fig_dir, exist_ok=True)
-    #
-    # # A) plot the three loss components
-    # plt.figure(figsize=(8, 5))
-    # plt.plot(epochs, rating_losses, label='Rating loss')
-    # plt.plot(epochs, struct_losses, label='Structure loss')
-    # plt.plot(epochs, semantic_losses, label='Semantic loss')
-    # plt.xlabel('Epoch')
-    # plt.ylabel('Sum-of-batch loss')
-    # plt.title('CKE Training Loss Components')
-    # plt.legend()
-    # plt.tight_layout()
-    # plt.savefig(os.path.join(fig_dir, f'loss_components_{current_time}.png'))
-    # plt.close()
-    #
-    # # B) plot all fairness & accuracy metrics collected in history
-    # for metric, values in history.items():
-    #     plt.figure(figsize=(10, 6))
-    #     plt.plot(epochs, values, label=metric)
-    #     plt.xlabel('Epoch')
-    #     plt.ylabel(metric)
-    #     plt.title(f'{metric} over epochs')
-    #     plt.legend(loc='best')
-    #     plt.tight_layout()
-    #     plt.savefig(os.path.join(fig_dir, f'{metric}_{current_time}.png'))
-    #     plt.close()
+    # delete big objects & clear caches
+    del model, trainer, dataset
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
 
 if __name__ == '__main__':
