@@ -6,20 +6,25 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from collections import defaultdict
+
+import yaml
+
+import wandb
 from tqdm import tqdm
 
 from datetime import datetime
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
 # RecBole imports
 from recbole.config import Config
 from recbole.data import create_dataset, data_preparation
-from recbole.model.general_recommender import BPR   # or import your MODEL
+#from recbole.model.general_recommender import BPR   # or import your MODEL
 from recbole.trainer import Trainer
-from recbole.utils import init_seed, init_logger
+from recbole.utils import init_seed, init_logger, get_model, get_trainer
 from recbole.utils.case_study import full_sort_topk
+from recbole.model.knowledge_aware_recommender.cke import CKE
+from recbole.data.dataloader.knowledge_dataloader import KGDataLoaderState
 
 # your fairness‐metrics module
 from fairness.metrics import (
@@ -104,6 +109,8 @@ def evaluate_fairness(config, model, dataset, train_data, test_data, K=10):
         })
 
     err_df = err_df.merge(user_meta, on=uid_field)
+
+    # FAIR REC IMPLEMENTS THIS (or a variation of this)
     item_grp_err = _per_item_group_errors(err_df, 'gender', 'error')
 
     # after you’ve merged user_meta into err_df
@@ -232,93 +239,187 @@ def evaluate_fairness(config, model, dataset, train_data, test_data, K=10):
             else:
                 exp['tail'] += 1
 
+    # FAIR REC implements this (or a variation of this)
     # Ensure Gini is calculated only if there are at least two categories or non-zero exposures
-    gini_value = 0.0
-    exposure_values = [count for count in exp.values() if count > 0]  # Get non-zero exposure counts
-    if len(exposure_values) > 1:
-        gini_value = gini(exposure_values)
-    elif len(exposure_values) == 1 and exposure_values[0] > 0:  # if only one group has all exposure
-        gini_value = gini([exp.get('pop', 0), exp.get('tail', 0)])
+    # gini_value = 0.0
+    # exposure_values = [count for count in exp.values() if count > 0]  # Get non-zero exposure counts
+    # if len(exposure_values) > 1:
+    #     gini_value = gini(exposure_values)
+    # elif len(exposure_values) == 1 and exposure_values[0] > 0:  # if only one group has all exposure
+    #     gini_value = gini([exp.get('pop', 0), exp.get('tail', 0)])
+
+    # --- Calculate Popularity Percentage ---
+    num_recommended_pop_items = exp.get('pop', 0)
+    num_recommended_tail_items = exp.get('tail', 0)
+    total_recommended_items = num_recommended_pop_items + num_recommended_tail_items
+    popularity_percentage = 0.0
+
+    if total_recommended_items > 0:
+        popularity_percentage = num_recommended_pop_items / total_recommended_items
 
     item_exp = {
-        'Gini_exposure': gini_value,
+        #'Gini_exposure': gini_value,
         'Exposure_tail': exp.get('tail', 0),
-        'Exposure_pop': exp.get('pop', 0)
+        'Exposure_pop': exp.get('pop', 0),
+        'Popularity_percentage': popularity_percentage
     }
 
     # merge all
     metrics = { **group_error, **utility, **item_exp }
     return metrics
 
+def train():
+    # This will initialize a new run with the next set of hyperparameters
 
-if __name__ == '__main__':
-    # ---------------------------
-    # 1) config & data prep
-    # ---------------------------
+    # The Wandblogger class already does this
+    wandb.init()
+    cfg = wandb.config
+
+    config_dict = {
+        "learning_rate": cfg.learning_rate,
+        "train_batch_size": cfg.train_batch_size,
+        "kg_embedding_size": cfg.kg_embedding_size,
+        "embedding_size": cfg.embedding_size,
+        "reg_weights": cfg.reg_weights,
+        "device": "cuda" if torch.cuda.is_available() else "cpu"  # Add this line
+    }
+
+    # -- translate wandb.config into RecBole Config --
     config = Config(
         config_file_list=['conf/model_kg.yaml'],
-        model = 'CKE',
-        dataset = 'ml-100k'
+        config_dict=config_dict,
+        model='CKE',
+        dataset='ml-100k',
     )
     init_seed(config['seed'], config['reproducibility'])
     init_logger(config)
+
+    # do I need this?
+    from recbole.utils.enum_type import ModelType
+    config['MODEL_TYPE'] = ModelType(config['MODEL_TYPE'])
+
     dataset = create_dataset(config)
     train_data, valid_data, test_data = data_preparation(config, dataset)
 
-    # ---------------------------
-    # 2) model & trainer
-    # ---------------------------
-    # model = BPR(config, train_data.dataset).to(config['device'])  # or replace with your MODEL
+    model = get_model(config["model"])(config, train_data._dataset).to(config["device"])
+    #init_logger.info(model)
+
+    # trainer loading and initialization
+    trainer = get_trainer(config["MODEL_TYPE"], config["model"])(config, model)
+
+    # model = CKE(config, dataset).to(config['device'])
     # trainer = Trainer(config, model)
 
-    from recbole.model.knowledge_aware_recommender.cke import CKE
-    model = CKE(config, dataset).to(config['device'])
-    trainer = Trainer(config, model)
+    # max_epoch = config['epochs']
+    # history = defaultdict(list)
 
-    max_epoch = config['epochs']
-    history = defaultdict(list)
+    # rating_losses, struct_losses, semantic_losses = [], [], []
 
-    from recbole.data.dataloader.knowledge_dataloader import KGDataLoaderState
+    # --- train & validate with built-in fit() ---
+    best_valid_score, best_valid_result = trainer.fit(
+        train_data=train_data,
+        valid_data=valid_data,
+        # TODO: fix this, it should work with false
+        saved=True,
+        show_progress=config["show_progress"]
+    )
 
-    for epoch in range(1, max_epoch + 1):
-        print(f"\n>>> Epoch {epoch}/{max_epoch}")
+    # --- test evaluation ---
+    test_result = trainer.evaluate(test_data, load_best_model=True, show_progress=config["show_progress"])
+    print(f"Test result: {test_result}")
 
-        # — TRAIN —
-        train_data.set_mode(KGDataLoaderState.RSKG)
-        train_loss = trainer._train_epoch(train_data, epoch)
-
-        # — VALIDATE (only if your loader supports it) —
-        if hasattr(valid_data, 'set_mode'):
-            valid_data.set_mode(KGDataLoaderState.RS)
-            valid_result = trainer._valid_epoch(valid_data, epoch)
-
-        # — FAIRNESS —
-        metrics = evaluate_fairness(config, model, dataset, train_data, test_data, K=10)
-        for name, val in metrics.items():
-            history[name].append(val)
+    # for epoch in range(1, max_epoch + 1):
+    #     print(f"\n>>> Epoch {epoch}/{max_epoch}")
+    #
+    #     # — TRAIN —
+    #     train_data.set_mode(KGDataLoaderState.RSKG)
+    #     train_loss = trainer._train_epoch(train_data, epoch)
+    #
+    #     # unpack and store the losses (it's a 3-tuple)
+    #     r_loss, s_loss, se_loss = train_loss
+    #     rating_losses.append(r_loss)
+    #     struct_losses.append(s_loss)
+    #     semantic_losses.append(se_loss)
+    #
+    #     # — VALIDATE
+    #     valid_score, valid_result = trainer._valid_epoch(valid_data, epoch)
+    #     #print(valid_result)
+    #
+    #     # — FAIRNESS —
+    #     metrics = evaluate_fairness(config, model, dataset, train_data, valid_data, K=10)
+    #     for name, val in metrics.items():
+    #         history[name].append(val)
+    #
+    #     # – LOG to W&B –
+    #     log_dict = {
+    #         'train/rating_loss': r_loss,
+    #         'train/struct_loss': s_loss,
+    #         'train/semantic_loss': se_loss,
+    #     }
+    #     # prefix all validation metrics with 'valid/'
+    #     for k, v in valid_result.items():
+    #         # if k not in fairness_metrics:
+    #         #     log_dict[f'accuracy_valid/{k}'] = v
+    #         # else:
+    #         #     log_dict[f'fairness_valid/{k}'] = v
+    #         # if "Recall" in k:
+    #         #     log_dict['Recall@10'] = v
+    #         ####
+    #         log_dict[f'accuracy_valid/{k}'] = v
+    #         if "Recall" in k:
+    #             log_dict['Recall@10'] = v
+    #     # prefix all fairness metrics with 'fair/{metric_name}'
+    #     for k, v in metrics.items():
+    #         log_dict[f'fairness_valid/{k}'] = v
+    #
+    #     wandb.log(log_dict, step=epoch)
 
     # ---------------------------
     # 4) plot
     # ---------------------------
-    epochs = list(range(1, max_epoch + 1))
-    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # epochs = list(range(1, max_epoch + 1))
+    # current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # run_id = wandb.run.id
+    # fig_dir = os.path.join('figures', run_id)
+    # os.makedirs(fig_dir, exist_ok=True)
+    #
+    # # A) plot the three loss components
+    # plt.figure(figsize=(8, 5))
+    # plt.plot(epochs, rating_losses, label='Rating loss')
+    # plt.plot(epochs, struct_losses, label='Structure loss')
+    # plt.plot(epochs, semantic_losses, label='Semantic loss')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Sum-of-batch loss')
+    # plt.title('CKE Training Loss Components')
+    # plt.legend()
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(fig_dir, f'loss_components_{current_time}.png'))
+    # plt.close()
+    #
+    # # B) plot all fairness & accuracy metrics collected in history
+    # for metric, values in history.items():
+    #     plt.figure(figsize=(10, 6))
+    #     plt.plot(epochs, values, label=metric)
+    #     plt.xlabel('Epoch')
+    #     plt.ylabel(metric)
+    #     plt.title(f'{metric} over epochs')
+    #     plt.legend(loc='best')
+    #     plt.tight_layout()
+    #     plt.savefig(os.path.join(fig_dir, f'{metric}_{current_time}.png'))
+    #     plt.close()
 
-    for metric, values in history.items():
-        plt.figure(figsize=(10, 6))
 
-        # 1) draw the line (with label)
-        plt.plot(epochs, values, label=metric)
+if __name__ == '__main__':
+    with open('sweep.yaml') as f:
+        sweep_config = yaml.safe_load(f)
 
-        # 2) now set labels & title
-        plt.xlabel('Epoch')
-        plt.ylabel('Metric value')
-        plt.title(f'{metric} over training epochs')
+    # store logs on an HDD
+    os.environ["WANDB_DIR"] = os.path.abspath("E:\\wandb_logs")
 
-        # 3) and finally build the legend *after* the plot exists
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    sweep_id = wandb.sweep(
+        sweep=sweep_config,
+        project="recbole-fairness-sweep",
+        entity="yoankich-tu-delft-rp"
+    )
 
-        plt.tight_layout()
-        plt.savefig(f'figures/{metric}_{current_time}.png')
-        plt.close()
-
-    # plt.show()
+    wandb.agent(sweep_id, function=train)

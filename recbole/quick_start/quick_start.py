@@ -174,9 +174,9 @@ def run_recbole(
         "test_result": test_result,
     }
 
-    import pickle
-    with open('split_data.pth', 'wb') as f:
-        pickle.dump(test_data, f)
+    # import pickle
+    # with open('split_data.pth', 'wb') as f:
+    #     pickle.dump(test_data, f)
 
     if not config["single_spec"]:
         dist.destroy_process_group()

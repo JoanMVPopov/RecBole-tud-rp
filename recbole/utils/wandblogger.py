@@ -34,6 +34,7 @@ class WandbLogger(object):
                 )
 
             # Initialize a W&B run
+            print(self._wandb.run is None)
             if self._wandb.run is None:
                 self._wandb.init(project=self.config.wandb_project, config=self.config)
 

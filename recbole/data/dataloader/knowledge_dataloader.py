@@ -106,6 +106,7 @@ class KnowledgeBasedDataLoader:
 
         self.shuffle = False
         self.state = None
+        self.dataset = dataset
         self._dataset = dataset
         self.kg_iter, self.gen_iter = None, None
 

@@ -773,3 +773,598 @@ class TailPercentage(AbstractMetric):
             key = "{}@{}".format(metric, k)
             metric_dict[key] = round(avg_result[k - 1], self.decimal_place)
         return metric_dict
+
+class PopularityPercentage(AbstractMetric):
+    """
+    PopularityPercentage refers to the proportion of popular items in the recommendation list against the total number of items
+    in the list, which can be seen as a popularity level measure of fairness.
+
+    For further details, please refer to the paper https://doi.org/10.1145/3437963.3441824
+    """
+    metric_type = EvaluatorType.RANKING
+    metric_need = ['rec.items', 'data.count_items']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.topk = config['topk']
+        self.popularity = config['popularity_ratio']
+        if self.popularity is None or self.popularity <= 0:
+            self.popularity = 0.1
+
+    def used_info(self, dataobject):
+        """Get the matrix of recommendation items and number of items in total item set."""
+        item_matrix = dataobject.get('rec.items')
+        count_items = dataobject.get('data.count_items')
+        return item_matrix.numpy(), dict(count_items)
+
+    def get_popularity(self, item_matrix, count_items):
+        """Get popularity percentage through the top-k recommendation list.
+
+        Args:
+            item_matrix(numpy.ndarray): matrix of items recommended to users.
+            count_items(dict): the number of interaction of items in training data.
+
+        Returns:
+            float: popularity percentage.
+        """
+        if self.popularity > 1:
+            tail_items = [item for item, cnt in count_items.items() if cnt >= self.popularity]
+        else:
+            count_items = sorted(count_items.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)
+            cut = max(int(len(count_items) * self.popularity), 1)
+            count_items = count_items[:cut]
+            tail_items = [item for item, cnt in count_items]
+        value = np.zeros_like(item_matrix)
+        for i in range(item_matrix.shape[0]):
+            row = item_matrix[i, :]
+            for j in range(row.shape[0]):
+                value[i][j] = 1 if row[j] in tail_items else 0
+        return value
+
+    def calculate_metric(self, dataobject):
+        item_matrix, count_items = self.used_info(dataobject)
+        result = self.metric_info(self.get_popularity(item_matrix, count_items))
+        metric_dict = self.topk_result('popularitypercentage', result)
+        return metric_dict
+
+    def metric_info(self, values):
+        return values.cumsum(axis=1) / np.arange(1, values.shape[1] + 1)
+
+    def topk_result(self, metric, value):
+        """Match the metric value to the `k` and put them in `dictionary` form.
+
+        Args:
+            metric(str): the name of calculated metric.
+            value(numpy.ndarray): metrics for each user, including values from `metric@1` to `metric@max(self.topk)`.
+
+        Returns:
+            dict: metric values required in the configuration.
+        """
+        metric_dict = {}
+        avg_result = value.mean(axis=0)
+        for k in self.topk:
+            key = '{}@{}'.format(metric, k)
+            metric_dict[key] = round(avg_result[k - 1], self.decimal_place)
+        return metric_dict
+
+
+class NonParityUnfairness(AbstractMetric):
+    r"""NonParityUnFairness measures unfairness of non-parity
+
+        For further details, please refer to the `paper <https://proceedings.neurips.cc/paper/2017/file/e6384711491713d29bc63fc5eeb5ba4f-Paper.pdf>`__.
+
+        .. math::
+            \mathrm {\left|\mathrm{E}_{g}[y]-\mathrm{E}_{\neg g}[y]\right|}
+
+        :math:`g` is protected group.
+        :math:`\neg g` is unprotected group.
+
+        """
+    smaller = True
+    metric_type = EvaluatorType.RANKING
+    metric_need = ['rec.positive_score', 'data.sst']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.sst_attr_list = config['sst_attr_list']
+
+    def used_info(self, dataobject):
+        score = dataobject.get('rec.positive_score').numpy()
+        sst_dict = {}
+        for sst in self.sst_attr_list:
+            sst_dict[sst] = dataobject.get('data.' + sst).numpy()
+
+        return score, sst_dict
+
+    def calculate_metric(self, dataobject):
+        score, sst_dict = self.used_info(dataobject)
+        metric_dict = {}
+        for sst, value in sst_dict.items():
+            key = 'NonParity Unfairness of sensitive attribute {}'.format(sst)
+            metric_dict[key] = round(self.get_nonparity(score, sst, value), self.decimal_place)
+
+        return metric_dict
+
+    def get_nonparity(self, score, sst, sst_value):
+        r"""
+
+        Args:
+            score(numpy.array): score prediction for user-item pairs
+            sst(str): sensitive attribute
+            sst_value(numpy.array): sensitive attribute's value of corresponding users
+        Return:
+            difference for sensitive attribute with binary value or std for multiple-value attribute
+        """
+        unique_value = np.unique(sst_value)
+        if len(unique_value) < 2:
+            raise ValueError(f'there is only one value for {sst} sensitive attribute')
+
+        sst_avg_score = []
+        for s in unique_value:
+            sst_avg_score.append(np.mean(score[sst_value == s]))
+
+        if len(unique_value) == 2:
+            return np.abs(sst_avg_score[0] - sst_avg_score[1])
+        else:
+            return np.std(sst_avg_score)
+
+
+class ValueUnfairness(AbstractMetric):
+    r"""ValueUnfairness measures value unfairness of non-parity
+
+        For further details, please refer to the `paper <https://proceedings.neurips.cc/paper/2017/file/e6384711491713d29bc63fc5eeb5ba4f-Paper.pdf>`__.
+
+        .. math::
+            \frac{1}{n} \sum_{j=1}^{n}\left|\left(\mathrm{E}_{g}[y]_{j}-\mathrm{E}_{g}[r]_{j}\right)-\left(\mathrm{E}_{\neg g}[y]_{j}-\mathrm{E}_{\neg g}[r]_{j}\right)\right|
+
+            \mathrm{E}_{g}[y]_{j}:=\frac{1}{\left|\left\{i:((i, j) \in X) \wedge g_{i}\right\}\right|} \sum_{i:((i, j) \in X) \wedge g_{i}} y_{i j}
+
+        :math:`g` is protected group.
+        :math:`\neg g` is unprotected group.
+
+        """
+    smaller = True
+    metric_type = EvaluatorType.RANKING
+
+    metric_need = ['data.positive_i', 'rec.positive_score', 'data.negative_i', 'rec.negative_score', 'data.sst']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.sst_key = config['sst_attr_list'][0]
+        self.mode = config['eval_args']['mode']['valid']
+
+    def used_info(self, dataobject):
+        pos_score = dataobject.get('rec.positive_score').numpy()
+        pos_iids = dataobject.get('data.positive_i').numpy()
+        if self.mode != 'full':
+            neg_score = dataobject.get('rec.negative_score').numpy()
+            neg_iids = dataobject.get('data.negative_i').numpy()
+        sst_value = dataobject.get('data.' + self.sst_key).numpy()
+        if self.mode != 'full':
+            return pos_score, pos_iids, neg_score, neg_iids, sst_value
+        else:
+            return pos_score, pos_iids, sst_value
+
+    def calculate_metric(self, dataobject):
+        if self.mode != 'full':
+            pos_score, pos_iids, neg_score, neg_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Value Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_value_unfairness(pos_score, pos_iids, neg_score, neg_iids, sst_value),
+                                     self.decimal_place)
+        else:
+            pos_score, pos_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Value Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_value_unfairness(pos_score, pos_iids, None, None, sst_value),
+                                     self.decimal_place)
+        return metric_dict
+
+    def get_value_unfairness(self, pos_score, pos_iids, neg_score, neg_iids, sst_value):
+        r"""
+
+        Args:
+            score(numpy.array): score prediction for user-item pairs
+            iids(numpy.array): item_id array of interaction ITEM_FIELD
+            sst_value(numpy.array): sensitive attribute's value of corresponding users
+        Return:
+            Value Unfairness
+        """
+        sst_unique_values, sst_indices = np.unique(sst_value, return_inverse=True)
+        if self.mode != 'full':
+            iid_unique_values, iid_indices = np.unique(np.concatenate((pos_iids, neg_iids)), return_inverse=True)
+        else:
+            iid_unique_values, iid_indices = np.unique(pos_iids, return_inverse=True)
+
+        if len(sst_unique_values) != 2:
+            raise ValueError(f'sensitive attribute must be binary')
+
+        pos_len = len(pos_iids)
+        iids_len = len(iid_unique_values)
+        avg_pred_list = np.zeros((iids_len, 2))
+        sst_num = np.zeros((iids_len, 2))
+        avg_true_list = np.zeros((iids_len, 2))
+
+        for iid_indice, sst_indice, score in zip(iid_indices[:pos_len], sst_indices, pos_score):
+            avg_pred_list[iid_indice][sst_indice] += score
+            sst_num[iid_indice][sst_indice] += 1
+            avg_true_list[iid_indice][sst_indice] += 1
+
+        if self.mode != 'full':
+            for iid_indice, sst_indice, score in zip(iid_indices[pos_len:], sst_indices, neg_score):
+                avg_pred_list[iid_indice][sst_indice] += score
+                sst_num[iid_indice][sst_indice] += 1
+
+        sst_num += 1e-5
+
+        avg_pred_list /= sst_num
+        avg_true_list /= sst_num
+
+        diff = avg_pred_list - avg_true_list
+        diff = np.mean(np.abs(diff[:, 0] - diff[:, 1]))
+
+        return diff
+
+
+class AbsoluteUnfairness(AbstractMetric):
+    r"""AbsoluteUnfairness measures absolute unfairness
+
+        For further details, please refer to the `paper <https://proceedings.neurips.cc/paper/2017/file/e6384711491713d29bc63fc5eeb5ba4f-Paper.pdf>`__.
+
+        .. math::
+            \frac{1}{n} \sum_{j=1}^{n}\left\|\left|\mathrm{E}_{g}[y]_{j}-\mathrm{E}_{g}[r]_{j}\right|-\mid \mathrm{E}_{\neg g}[y]_{j}-\mathrm{E}_{\neg g}[r]_{j}\right\|
+
+            \mathrm{E}_{g}[y]_{j}:=\frac{1}{\left|\left\{i:((i, j) \in X) \wedge g_{i}\right\}\right|} \sum_{i:((i, j) \in X) \wedge g_{i}} y_{i j}
+
+        :math:`g` is protected group.
+        :math:`\neg g` is unprotected group.
+
+        """
+    smaller = True
+    metric_type = EvaluatorType.RANKING
+    metric_need = ['data.positive_i', 'rec.positive_score', 'data.negative_i', 'rec.negative_score', 'data.sst']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.sst_key = config['sst_attr_list'][0]
+        self.mode = config['eval_args']['mode']['valid']
+
+    def used_info(self, dataobject):
+        pos_score = dataobject.get('rec.positive_score').numpy()
+        pos_iids = dataobject.get('data.positive_i').numpy()
+        if self.mode != 'full':
+            neg_score = dataobject.get('rec.negative_score').numpy()
+            neg_iids = dataobject.get('data.negative_i').numpy()
+        sst_value = dataobject.get('data.' + self.sst_key).numpy()
+        if self.mode != 'full':
+            return pos_score, pos_iids, neg_score, neg_iids, sst_value
+        else:
+            return pos_score, pos_iids, sst_value
+
+    def calculate_metric(self, dataobject):
+        if self.mode != 'full':
+            pos_score, pos_iids, neg_score, neg_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Absolute Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_absolute_unfairness(pos_score, pos_iids, neg_score, neg_iids, sst_value),
+                                     self.decimal_place)
+        else:
+            pos_score, pos_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Absolute Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_absolute_unfairness(pos_score, pos_iids, None, None, sst_value),
+                                     self.decimal_place)
+        return metric_dict
+
+    def get_absolute_unfairness(self, pos_score, pos_iids, neg_score, neg_iids, sst_value):
+        r"""
+
+        Args:
+            score(numpy.array): score prediction for user-item pairs
+            iids(numpy.array): item_id array of interaction ITEM_FIELD
+            sst_value(numpy.array): sensitive attribute's value of corresponding users
+        Return:
+            Absolute Unfairness
+        """
+        sst_unique_values, sst_indices = np.unique(sst_value, return_inverse=True)
+        if self.mode != 'full':
+            iid_unique_values, iid_indices = np.unique(np.concatenate((pos_iids, neg_iids)), return_inverse=True)
+        else:
+            iid_unique_values, iid_indices = np.unique(pos_iids, return_inverse=True)
+
+        if len(sst_unique_values) != 2:
+            raise ValueError(f'sensitive attribute must be binary')
+
+        pos_len = len(pos_iids)
+        iids_len = len(iid_unique_values)
+        avg_pred_list = np.zeros((iids_len, 2))
+        sst_num = np.zeros((iids_len, 2))
+        avg_true_list = np.zeros((iids_len, 2))
+
+        for iid_indice, sst_indice, score in zip(iid_indices[:pos_len], sst_indices, pos_score):
+            avg_pred_list[iid_indice][sst_indice] += score
+            sst_num[iid_indice][sst_indice] += 1
+            avg_true_list[iid_indice][sst_indice] += 1
+
+        if self.mode != 'full':
+            for iid_indice, sst_indice, score in zip(iid_indices[pos_len:], sst_indices, neg_score):
+                avg_pred_list[iid_indice][sst_indice] += score
+                sst_num[iid_indice][sst_indice] += 1
+
+        sst_num += 1e-5
+
+        avg_pred_list /= sst_num
+        avg_true_list /= sst_num
+
+        diff = np.abs(avg_pred_list - avg_true_list)
+        diff = np.mean(np.abs(diff[:, 0] - diff[:, 1]))
+
+        return diff
+
+
+class UnderUnfairness(AbstractMetric):
+    r"""UnderUnfairness measures underestimation unfairness
+
+        For further details, please refer to the `paper <https://proceedings.neurips.cc/paper/2017/file/e6384711491713d29bc63fc5eeb5ba4f-Paper.pdf>`__.
+
+        .. math::
+            \frac{1}{n} \sum_{j=1}^{n}\left|\max \left\{0, \mathrm{E}_{g}[r]_{j}-\mathrm{E}_{g}[y]_{j}\right\}-\max \left\{0, \mathrm{E}_{\neg g}[r]_{j}-\mathrm{E}_{\neg g}[y]_{j}\right\}\right|
+
+            \mathrm{E}_{g}[y]_{j}:=\frac{1}{\left|\left\{i:((i, j) \in X) \wedge g_{i}\right\}\right|} \sum_{i:((i, j) \in X) \wedge g_{i}} y_{i j}
+
+        :math:`g` is protected group.
+        :math:`\neg g` is unprotected group.
+
+        """
+    smaller = True
+    metric_type = EvaluatorType.RANKING
+    metric_need = ['data.positive_i', 'rec.positive_score', 'data.negative_i', 'rec.negative_score', 'data.sst']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.sst_key = config['sst_attr_list'][0]
+        self.mode = config['eval_args']['mode']['valid']
+
+    def used_info(self, dataobject):
+        pos_score = dataobject.get('rec.positive_score').numpy()
+        pos_iids = dataobject.get('data.positive_i').numpy()
+        if self.mode != 'full':
+            neg_score = dataobject.get('rec.negative_score').numpy()
+            neg_iids = dataobject.get('data.negative_i').numpy()
+        sst_value = dataobject.get('data.' + self.sst_key).numpy()
+        if self.mode != 'full':
+            return pos_score, pos_iids, neg_score, neg_iids, sst_value
+        else:
+            return pos_score, pos_iids, sst_value
+
+    def calculate_metric(self, dataobject):
+        if self.mode != 'full':
+            pos_score, pos_iids, neg_score, neg_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Underestimation Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_under_unfairness(pos_score, pos_iids, neg_score, neg_iids, sst_value),
+                                     self.decimal_place)
+        else:
+            pos_score, pos_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Underestimation Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_under_unfairness(pos_score, pos_iids, None, None, sst_value),
+                                     self.decimal_place)
+        return metric_dict
+
+    def get_under_unfairness(self, pos_score, pos_iids, neg_score, neg_iids, sst_value):
+        r"""
+
+        Args:
+            score(numpy.array): score prediction for user-item pairs
+            iids(numpy.array): item_id array of interaction ITEM_FIELD
+            sst_value(numpy.array): sensitive attribute's value of corresponding users
+        Return:
+            Underestimation Unfairness
+        """
+        sst_unique_values, sst_indices = np.unique(sst_value, return_inverse=True)
+        if self.mode != 'full':
+            iid_unique_values, iid_indices = np.unique(np.concatenate((pos_iids, neg_iids)), return_inverse=True)
+        else:
+            iid_unique_values, iid_indices = np.unique(pos_iids, return_inverse=True)
+
+        if len(sst_unique_values) != 2:
+            raise ValueError(f'sensitive attribute must be binary')
+
+        pos_len = len(pos_iids)
+        iids_len = len(iid_unique_values)
+        avg_pred_list = np.zeros((iids_len, 2))
+        sst_num = np.zeros((iids_len, 2))
+        avg_true_list = np.zeros((iids_len, 2))
+
+        for iid_indice, sst_indice, score in zip(iid_indices[:pos_len], sst_indices, pos_score):
+            avg_pred_list[iid_indice][sst_indice] += score
+            sst_num[iid_indice][sst_indice] += 1
+            avg_true_list[iid_indice][sst_indice] += 1
+
+        if self.mode != 'full':
+            for iid_indice, sst_indice, score in zip(iid_indices[pos_len:], sst_indices, neg_score):
+                avg_pred_list[iid_indice][sst_indice] += score
+                sst_num[iid_indice][sst_indice] += 1
+
+        sst_num += 1e-5
+
+        avg_pred_list /= sst_num
+        avg_true_list /= sst_num
+
+        diff = np.where((avg_true_list - avg_pred_list) > 0, avg_true_list - avg_pred_list, 0)
+        diff = np.mean(np.abs(diff[:, 0] - diff[:, 1]))
+
+        return diff
+
+
+class OverUnfairness(AbstractMetric):
+    r"""OverUnfairness measures overestimation unfairness
+
+        For further details, please refer to the `paper <https://proceedings.neurips.cc/paper/2017/file/e6384711491713d29bc63fc5eeb5ba4f-Paper.pdf>`__.
+
+        .. math::
+            \frac{1}{n} \sum_{j=1}^{n}\left|\max \left\{0, \mathrm{E}_{g}[r]_{j}-\mathrm{E}_{g}[y]_{j}\right\}-\max \left\{0, \mathrm{E}_{\neg g}[r]_{j}-\mathrm{E}_{\neg g}[y]_{j}\right\}\right|
+
+            \mathrm{E}_{g}[y]_{j}:=\frac{1}{\left|\left\{i:((i, j) \in X) \wedge g_{i}\right\}\right|} \sum_{i:((i, j) \in X) \wedge g_{i}} y_{i j}
+
+        :math:`g` is protected group.
+        :math:`\neg g` is unprotected group.
+
+        """
+    smaller = True
+    metric_type = EvaluatorType.RANKING
+    metric_need = ['data.positive_i', 'rec.positive_score', 'data.negative_i', 'rec.negative_score', 'data.sst']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.sst_key = config['sst_attr_list'][0]
+        self.mode = config['eval_args']['mode']['valid']
+
+    def used_info(self, dataobject):
+        pos_score = dataobject.get('rec.positive_score').numpy()
+        pos_iids = dataobject.get('data.positive_i').numpy()
+        if self.mode != 'full':
+            neg_score = dataobject.get('rec.negative_score').numpy()
+            neg_iids = dataobject.get('data.negative_i').numpy()
+        sst_value = dataobject.get('data.' + self.sst_key).numpy()
+
+        if self.mode != 'full':
+            return pos_score, pos_iids, neg_score, neg_iids, sst_value
+        else:
+            return pos_score, pos_iids, sst_value
+
+    def calculate_metric(self, dataobject):
+        if self.mode != 'full':
+            pos_score, pos_iids, neg_score, neg_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Overestimation Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_over_unfairness(pos_score, pos_iids, neg_score, neg_iids, sst_value),
+                                     self.decimal_place)
+        else:
+            pos_score, pos_iids, sst_value = self.used_info(dataobject)
+            metric_dict = {}
+            key = 'Overestimation Unfairness of sensitive attribute {}'.format(self.sst_key)
+            metric_dict[key] = round(self.get_over_unfairness(pos_score, pos_iids, None, None, sst_value),
+                                     self.decimal_place)
+        return metric_dict
+
+    def get_over_unfairness(self, pos_score, pos_iids, neg_score, neg_iids, sst_value):
+        r"""
+
+        Args:
+            score(numpy.array): score prediction for user-item pairs
+            iids(numpy.array): item_id array of interaction ITEM_FIELD
+            sst_value(numpy.array): sensitive attribute's value of corresponding users
+        Return:
+            Overestimation Unfairness
+        """
+        sst_unique_values, sst_indices = np.unique(sst_value, return_inverse=True)
+        if self.mode != 'full':
+            iid_unique_values, iid_indices = np.unique(np.concatenate((pos_iids, neg_iids)), return_inverse=True)
+        else:
+            iid_unique_values, iid_indices = np.unique(pos_iids, return_inverse=True)
+        if len(sst_unique_values) != 2:
+            raise ValueError(f'sensitive attribute must be binary')
+
+        pos_len = len(pos_iids)
+        iids_len = len(iid_unique_values)
+        avg_pred_list = np.zeros((iids_len, 2))
+        sst_num = np.zeros((iids_len, 2))
+        avg_true_list = np.zeros((iids_len, 2))
+
+        for iid_indice, sst_indice, score in zip(iid_indices[:pos_len], sst_indices, pos_score):
+            avg_pred_list[iid_indice][sst_indice] += score
+            sst_num[iid_indice][sst_indice] += 1
+            avg_true_list[iid_indice][sst_indice] += 1
+
+        if self.mode != 'full':
+            for iid_indice, sst_indice, score in zip(iid_indices[pos_len:], sst_indices, neg_score):
+                avg_pred_list[iid_indice][sst_indice] += score
+                sst_num[iid_indice][sst_indice] += 1
+
+        sst_num += 1e-5
+
+        avg_pred_list /= sst_num
+        avg_true_list /= sst_num
+
+        diff = np.where((avg_pred_list - avg_true_list) > 0, avg_pred_list - avg_true_list, 0)
+        diff = np.mean(np.abs(diff[:, 0] - diff[:, 1]))
+
+        return diff
+
+
+class DifferentialFairness(AbstractMetric):
+    """
+    The DifferentialFairness metric aims to ensure equitable treatment for all protected groups.
+
+    For further details, please refer to the https://dl.acm.org/doi/10.1145/3442381.3449904
+
+    For gender bias in our recommender (assuming a gender binary), we can estimate epsilon-DF per sensitive item i by verifying that:
+
+    .. math::
+             \begin{gathered}
+        e^{-\epsilon} \leq \frac{\sum_{u: A=m} \hat{y}_{u i}+\alpha}{N_{m}+2 \alpha} \frac{N_{f}+2 \alpha}{\sum_{u: A=f} \hat{y}_{u i}+\alpha} \leq e^{\epsilon} \\
+        e^{-\epsilon} \leq \frac{\sum_{u: A=m}\left(1-\hat{y}_{u i}\right)+\alpha}{N_{m}+2 \alpha} \frac{N_{f}+2 \alpha}{\sum_{u: A=f}\left(1-\hat{y}_{u i}\right)+\alpha} \leq e^{\epsilon},
+        \end{gathered}
+    :math:`\alpha` is each entry of the parameter of a symmetric Dirichlet prior with concentration parameter 2\alpha.
+    :math:`i` is an item.
+    :math:`N_A` is the number of users of gender A (m or f ).
+
+    """
+    smaller = True
+    metric_type = EvaluatorType.RANKING
+    metric_need = ['data.positive_i', 'rec.positive_score', 'data.sst']
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.sst_key_list = config['sst_attr_list']
+
+    def used_info(self, dataobject):
+        score = dataobject.get('rec.positive_score').numpy()
+        iids = dataobject.get('data.positive_i').numpy()
+        sst_value_dict = {}
+        for sst_key in self.sst_key_list:
+            sst_value_dict[sst_key] = dataobject.get('data.' + sst_key).numpy()
+
+        return score, iids, sst_value_dict
+
+    def calculate_metric(self, dataobject):
+        score, iids, sst_value_dict = self.used_info(dataobject)
+        metric_dict = {}
+        for sst_key, sst_value in sst_value_dict.items():
+            key = 'Differential Fairness of sensitive attribute {}'.format(sst_key)
+            metric_dict[key] = round(self.get_differential_fairness(score, iids, sst_value), self.decimal_place)
+
+        return metric_dict
+
+    def get_differential_fairness(self, score, iids, sst_value):
+        r"""
+
+        Args:
+            score(numpy.array): score prediction for user-item pairs
+            iids(numpy.array): item_id array of interaction ITEM_FIELD
+            sst_value(numpy.array): sensitive attribute's value of corresponding users/items
+        Return:
+            Differential Fairness
+        """
+        sst_unique_values, sst_indices = np.unique(sst_value, return_inverse=True)
+        iid_unique_values, iid_indices = np.unique(iids, return_inverse=True)
+        score_matric = np.zeros((len(iid_unique_values), len(sst_unique_values)), dtype=np.float32)
+        epsilon_values = np.zeros(len(iid_unique_values), dtype=np.float32)
+
+        concentration_parameter = 1.0
+        dirichlet_alpha = concentration_parameter / len(iid_unique_values)
+
+        for i in range(len(iid_unique_values)):
+            for j in range(len(sst_unique_values)):
+                indices = (iid_indices == i) * (sst_indices == j)
+                score_matric[i, j] = (score[indices].sum() + dirichlet_alpha) / (
+                            indices.sum() + concentration_parameter)
+
+        for i in range(len(sst_unique_values)):
+            for j in range(i + 1, len(sst_unique_values)):
+                epsilon = np.abs(np.log(score_matric[:, i]) - np.log(score_matric[:, j]))
+                epsilon_values = np.where(epsilon > epsilon_values, epsilon, epsilon_values)
+
+        return epsilon_values.mean()

@@ -17,20 +17,38 @@ load_col:
     kg: [head_id, relation_id, tail_id]
     link: [item_id, entity_id]
 
+# -------------------------- Interaction Filtering --------------------------
+rm_dup_inter: first                   # Remove duplicate user-item interactions; keep the earliest
+user_inter_num_interval: "[5,inf)"    # Retain users with 10 or more interactions
+item_inter_num_interval: "[5,inf)"    # Retain items with at least 1 interaction
+
+val_interval:               # (dict) Filter inter by values in {value field (str): interval (str)}.
+  rating: "[1, inf)"
+# ----------------------------------------------------------------------------
+
 # --- training ---
-epochs: 100
-train_batch_size: 2048
-eval_batch_size: 4096
-#neg_sampling:    # full-sort eval
-#    +: full
+epochs: 10
+
+log_wandb: True
+wandb_project: 'recbole-fairness-sweep'
+show_progress: True
+MODEL_TYPE: 4
+model: 'CKE'
+
+sst_attr_list: ['gender']
+popularity_ratio: 0.1
 
 # --- evaluation ---
-eval_args:
-    split:  {'RS': [0.8, 0.1, 0.1]}
-    order:  RO
-    mode:   full
+eval_args: {
+  split: { 'RS': [ 0.8, 0.1, 0.1 ] },
+  order: RO,
+  mode: full
+}
 topk: 10
-#metrics: ['Recall', 'NDCG']   # RecBole’s internal metrics – keep them for Info
+metrics: ["Recall", "MRR", "NDCG", "Hit", "MAP", "Precision", "GAUC",
+          "TailPercentage", "GiniIndex", "PopularityPercentage",
+          "DifferentialFairness" ,"ValueUnfairness", "AbsoluteUnfairness",
+          "UnderUnfairness", "OverUnfairness", "NonParityUnfairness"]
 
 # fix randomness
 seed: 42
