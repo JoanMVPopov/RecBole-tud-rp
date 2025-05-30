@@ -3,7 +3,7 @@
 #save_dataset: True
 #save_dataloaders: True
 
-use_gpu: True
+use_gpu: False
 
 ## NEEDED FOR KG/HYBRID MODELS
 USER_ID_FIELD: user_id
@@ -29,7 +29,7 @@ val_interval:               # (dict) Filter inter by values in {value field (str
 # ----------------------------------------------------------------------------
 
 # --- training ---
-epochs: 10
+epochs: 150
 
 log_wandb: True
 wandb_project: 'recbole-fairness-sweep'

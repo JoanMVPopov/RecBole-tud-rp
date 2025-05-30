@@ -517,6 +517,9 @@ class Trainer(AbstractTrainer):
                         valid_result_updated[f"Recall@10"] = v
                     valid_result_updated[f"valid/{k}"] = v
 
+                train_metrics["epoch"] = epoch_idx
+                valid_result_updated["epoch"] = epoch_idx
+
                 # NEED A SINGLE LOGGER FOR BOTH train loss and validation results
                 self.wandblogger.log_metrics({**valid_result_updated, **train_metrics}, step=epoch_idx)
 
@@ -649,7 +652,7 @@ class Trainer(AbstractTrainer):
         result = self.evaluator.evaluate(struct)
         if not self.config["single_spec"]:
             result = self._map_reduce(result, num_sample)
-        self.wandblogger.log_eval_metrics(result, head="eval")
+        #self.wandblogger.log_eval_metrics(result, head="eval")
         return result
 
     def _map_reduce(self, result, num_sample):

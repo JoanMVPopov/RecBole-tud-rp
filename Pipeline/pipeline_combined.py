@@ -1,5 +1,7 @@
 import os
 import json
+from multiprocessing import Process, set_start_method
+
 import torch
 import numpy as np
 import pandas as pd
@@ -283,7 +285,7 @@ def train():
         "kg_embedding_size": cfg.kg_embedding_size,
         "embedding_size": cfg.embedding_size,
         "reg_weights": cfg.reg_weights,
-        "use_gpu": True if torch.cuda.is_available() else False  # Add this line
+        #"use_gpu": True if torch.cuda.is_available() else False  # Add this line
     }
 
     # -- translate wandb.config into RecBole Config --
@@ -294,7 +296,7 @@ def train():
         dataset='ml-100k',
     )
     init_seed(config['seed'], config['reproducibility'])
-    init_logger(config)
+    # init_logger(config)
 
     # do I need this?
     from recbole.utils.enum_type import ModelType
@@ -322,26 +324,61 @@ def train():
     test_result = trainer.evaluate(test_data, load_best_model=True, show_progress=config["show_progress"])
     print(f"Test result: {test_result}")
 
-    wandb.finish()
-
     # delete big objects & clear caches
-    del model, trainer, dataset
+
+    del train_data
+    del valid_data
+    del test_data
+    del dataset  # Now dataset can be deleted
+
+    del model, trainer
     import gc
     gc.collect()
     torch.cuda.empty_cache()
 
+    # wandb.finish(quiet=True)
+    # print(f"Finished W&B run")
 
-if __name__ == '__main__':
-    with open('sweep.yaml') as f:
-        sweep_config = yaml.safe_load(f)
+# def run_agent(sweep_id):
+#     wandb.agent(sweep_id, function=train)
 
-    # store logs on an HDD
+
+if __name__ == "__main__":
     os.environ["WANDB_DIR"] = os.path.abspath("E:\\wandb_logs")
+    os.environ["WANDB_DEBUG "] = "true"
+    os.environ["WANDB_DEBUG "] = "debug"
 
-    sweep_id = wandb.sweep(
-        sweep=sweep_config,
-        project="recbole-fairness-sweep",
-        entity="yoankich-tu-delft-rp"
-    )
+    print(f"[ENTRYPOINT] Running with interpreter: {sys.executable}")
+    print(f"[ENTRYPOINT] Full argv: {sys.argv}")
+    import torch
+    train()
 
-    wandb.agent(sweep_id, function=train)
+# if __name__ == '__main__':
+#     with open('sweep.yaml') as f:
+#         sweep_config = yaml.safe_load(f)
+#
+#     # store logs on an HDD
+#     os.environ["WANDB_DIR"] = os.path.abspath("E:\\wandb_logs")
+#
+#     set_start_method('spawn')
+#
+#     sweep_id = wandb.sweep(
+#         sweep=sweep_config,
+#         project="recbole-fairness-sweep",
+#         entity="yoankich-tu-delft-rp"
+#     )
+#
+#     run_agent(sweep_id)
+#
+#     # NUM_AGENTS = 3
+#     # processes = []
+#     # for _ in range(NUM_AGENTS):
+#     #     # Fix: Pass the function reference and arguments separately
+#     #     p = Process(target=run_agent, args=(sweep_id,))
+#     #     p.start()
+#     #     processes.append(p)
+#     #
+#     # for p in processes:
+#     #     p.join()
+#     #
+#     # print("All sweep agents completed!")

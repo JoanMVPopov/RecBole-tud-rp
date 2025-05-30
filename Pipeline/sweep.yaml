@@ -3,12 +3,17 @@ metric:
   name: Recall@10
   goal: maximize
 
+#program: pipeline_combined.py
+
+command:
+  - C:/Users/Yoan/PycharmProjects/RP-TUD-Fork/.venv/Scripts/python.exe
+  - pipeline_combined.py
+
 parameters:
   learning_rate:
     values: [ 1e-4, 5e-4, 1e-3 ]
   kg_embedding_size:
-    #values: [ 16, 64, 128 ]
-    values: [64]
+    values: [ 16, 64, 128 ]
   embedding_size:
     values: [ 16, 64, 128 ]
   train_batch_size:
