@@ -157,13 +157,22 @@ def data_preparation(config, dataset):
             - valid_data (AbstractDataLoader): The dataloader for validation.
             - test_data (AbstractDataLoader): The dataloader for testing.
     """
+    print("11111111111111111111111111111111")
     dataloaders = load_split_dataloaders(config)
+    print("222222222222222222222222222")
+
     if dataloaders is not None:
+        print("3333333333333333333333333333333")
         train_data, valid_data, test_data = dataloaders
+        print("4444444444444444444")
         dataset._change_feat_format()
+        print("555555555555555")
     else:
         model_type = config["MODEL_TYPE"]
+        print("666666666")
+
         built_datasets = dataset.build()
+        print("777777777")
 
         train_dataset, valid_dataset, test_dataset = built_datasets
         train_sampler, valid_sampler, test_sampler = create_samplers(

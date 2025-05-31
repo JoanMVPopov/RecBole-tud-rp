@@ -36,6 +36,13 @@ class Evaluator(object):
         """
         result_dict = OrderedDict()
         for metric in self.metrics:
-            metric_val = self.metric_class[metric].calculate_metric(dataobject)
-            result_dict.update(metric_val)
+            try:
+                metric_val = self.metric_class[metric].calculate_metric(dataobject)
+                result_dict.update(metric_val)
+            except ValueError as e:
+                print(f"Metric {metric} cannot be applied to this dataobject (e.g. binary sst required). Returning -1")
+                #k = f"{metric}@{self.config['topk'][0]}"
+                k = f"{metric}"
+                v = -1
+                result_dict.update({k: v})
         return result_dict

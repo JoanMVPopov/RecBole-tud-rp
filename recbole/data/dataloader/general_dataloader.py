@@ -195,6 +195,7 @@ class FullSortEvalDataLoader(AbstractDataLoader):
 
     def __init__(self, config, dataset, sampler, shuffle=False):
         self.logger = getLogger()
+        self.dataset = dataset
         self.uid_field = dataset.uid_field
         self.iid_field = dataset.iid_field
         self.is_sequential = config["MODEL_TYPE"] == ModelType.SEQUENTIAL

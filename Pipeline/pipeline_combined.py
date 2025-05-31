@@ -303,6 +303,11 @@ def train():
     config['MODEL_TYPE'] = ModelType(config['MODEL_TYPE'])
 
     dataset = create_dataset(config)
+
+    # USE THIS TO CONFIRM GENDER MAPPING
+    # M is 1, F is 2
+    print(dataset.field2id_token['gender'])
+
     train_data, valid_data, test_data = data_preparation(config, dataset)
 
     model = get_model(config["model"])(config, train_data._dataset).to(config["device"])

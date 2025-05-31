@@ -15,6 +15,8 @@ recbole.data.dataset
 import copy
 import pickle
 import os
+
+import pandas
 import yaml
 from collections import Counter, defaultdict
 from logging import getLogger
@@ -2194,10 +2196,14 @@ class Dataset(torch.utils.data.Dataset):
         Returns:
             :class:`~recbole.data.interaction.Interaction`: Converted data.
         """
+        print(data)
+        print(isinstance(data, pandas.DataFrame))
         new_data = {}
         for k in data:
             value = data[k].values
+            print(f"VALUE: {value}")
             ftype = self.field2type[k]
+            print(f"ftype: {ftype}")
             if ftype == FeatureType.TOKEN:
                 new_data[k] = torch.LongTensor(value)
             elif ftype == FeatureType.FLOAT:

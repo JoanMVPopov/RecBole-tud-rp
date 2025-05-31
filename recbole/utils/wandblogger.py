@@ -67,6 +67,7 @@ class WandbLogger(object):
     def _set_steps(self):
         self._wandb.define_metric("train/*", step_metric="epoch")
         self._wandb.define_metric("valid/*", step_metric="epoch")
+        self._wandb.define_metric(name="eval/*")
 
     def _add_head_to_metrics(self, metrics, head):
         print(head)

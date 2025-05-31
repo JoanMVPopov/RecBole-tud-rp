@@ -16,22 +16,25 @@ r"""
 recbole.trainer.trainer
 ################################
 """
-
+import copy
 import os
 
 from logging import getLogger
 from time import time
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.optim as optim
+from torch import Tensor
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from tqdm import tqdm
 import torch.cuda.amp as amp
 
 from recbole.data.interaction import Interaction
+from recbole.data import data_preparation, create_samplers, get_dataloader
 from recbole.data.dataloader import FullSortEvalDataLoader
-from recbole.evaluator import Evaluator, Collector
+from recbole.evaluator import Evaluator, Collector, DataStruct
 from recbole.utils import (
     ensure_dir,
     get_local_time,
@@ -269,7 +272,7 @@ class Trainer(AbstractTrainer):
                 )
         return total_loss
 
-    def _valid_epoch(self, valid_data, show_progress=False):
+    def _valid_epoch(self, valid_data, show_progress=False, called_from_fit=False):
         r"""Valid the model with valid data
 
         Args:
@@ -281,7 +284,7 @@ class Trainer(AbstractTrainer):
             dict: valid result
         """
         valid_result = self.evaluate(
-            valid_data, load_best_model=False, show_progress=show_progress
+            valid_data, load_best_model=False, show_progress=show_progress, called_from_fit=called_from_fit
         )
         valid_score = calculate_valid_score(valid_result, self.valid_metric)
         return valid_score, valid_result
@@ -474,7 +477,7 @@ class Trainer(AbstractTrainer):
             if (epoch_idx + 1) % self.eval_step == 0:
                 valid_start_time = time()
                 valid_score, valid_result = self._valid_epoch(
-                    valid_data, show_progress=show_progress
+                    valid_data, show_progress=show_progress, called_from_fit=True
                 )
 
                 (
@@ -586,7 +589,7 @@ class Trainer(AbstractTrainer):
 
     @torch.no_grad()
     def evaluate(
-        self, eval_data, load_best_model=True, model_file=None, show_progress=False
+        self, eval_data, load_best_model=True, model_file=None, show_progress=False, called_from_fit=False
     ):
         r"""Evaluate the model based on the eval data.
 
@@ -616,44 +619,157 @@ class Trainer(AbstractTrainer):
 
         self.model.eval()
 
-        if isinstance(eval_data, FullSortEvalDataLoader):
-            eval_func = self._full_sort_batch_eval
-            if self.item_tensor is None:
-                self.item_tensor = eval_data._dataset.get_item_feature().to(self.device)
-        else:
-            eval_func = self._neg_sample_batch_eval
-        if self.config["eval_type"] == EvaluatorType.RANKING:
-            self.tot_item_num = eval_data._dataset.item_num
+        # FOR LOOP NEEDS TO START HERE
+        groups = ['all', 'male', 'female']
+        to_log = {}
 
-        iter_data = (
-            tqdm(
-                eval_data,
-                total=len(eval_data),
-                ncols=100,
-                desc=set_color(f"Evaluate   ", "pink"),
-            )
-            if show_progress
-            else eval_data
+        male_token = 1
+        female_token = 2
+
+        # Step 0: Filter inter_feat based on those user_ids
+        inter_feat = eval_data.dataset.inter_feat
+
+        # Step 1: Convert the Interaction to a DataFrame safely
+        inter_df = inter_feat.numpy()
+        inter_df = pd.DataFrame(inter_df)
+
+        # Step 2: Filter the DataFrame for male users
+        uid_field = eval_data.dataset.uid_field
+        user_feat = eval_data.dataset.user_feat
+        gender_field = 'gender'
+
+        # Convert user features to DataFrame for filtering
+        user_df = pd.DataFrame(user_feat.numpy())
+
+        # Get user IDs by gender
+        male_user_ids = user_df[user_df[gender_field] == 1][uid_field].values
+        female_user_ids = user_df[user_df[gender_field] == 2][uid_field].values
+
+        # Filter interaction DataFrame
+        male_df = inter_df[inter_df[uid_field].isin(male_user_ids)]
+        female_df = inter_df[inter_df[uid_field].isin(female_user_ids)]
+
+        #print(male_df)
+
+        from recbole.data.interaction import Interaction
+
+        # Instead of .to_numpy(), use .tolist():
+        male_dict = {col: male_df[col].tolist() for col in male_df.columns}
+        female_dict = {col: female_df[col].tolist() for col in female_df.columns}
+
+        male_inter = Interaction(male_dict)
+        female_inter = Interaction(female_dict)
+
+        male_dataset = eval_data.dataset.copy(new_inter_feat=male_inter)
+        female_dataset = eval_data.dataset.copy(new_inter_feat=female_inter)
+
+        print(eval_data.dataset)
+        print("-----------------")
+        print(male_dataset)
+        print("----------------")
+        print(female_dataset)
+
+        # male_dataset = eval_data.dataset.copy(new_inter_feat=male_df)
+        # female_dataset = eval_data.dataset.copy(new_inter_feat=female_df)
+
+        female_config = copy.deepcopy(self.config)
+        female_config['eval_args']['split'] = {'RS': [0.0, 0.0, 1.0]}
+
+        male_config = copy.deepcopy(self.config)
+        male_config['eval_args']['split'] = {'RS': [0.0, 0.0, 1.0]}
+
+        _, _, female_test_sampler = create_samplers(
+            female_config, female_dataset, [female_dataset, female_dataset, female_dataset]
         )
 
-        num_sample = 0
-        for batch_idx, batched_data in enumerate(iter_data):
-            num_sample += len(batched_data)
-            interaction, scores, positive_u, positive_i = eval_func(batched_data)
-            if self.gpu_available and show_progress:
-                iter_data.set_postfix_str(
-                    set_color("GPU RAM: " + get_gpu_usage(self.device), "yellow")
+        _, _, male_test_sampler = create_samplers(
+            male_config, male_dataset, [male_dataset, male_dataset, male_dataset]
+        )
+
+        female_test_loader = get_dataloader(female_config, "test")(
+            female_config, female_dataset, female_test_sampler, shuffle=False
+        )
+
+        male_test_loader = get_dataloader(male_config, "test")(
+            male_config, male_dataset, male_test_sampler, shuffle=False
+        )
+
+        # # 7.a) Female‐only
+        # _, _, female_test_loader = data_preparation(female_config, female_dataset)
+        #
+        # # 7.b) Male‐only
+        # _, _, male_test_loader = data_preparation(male_config, male_dataset)
+
+        for grp in groups:
+            print(f"******\nEVALUATING GROUP: {grp}\n******")
+            if grp == 'all':
+                current_eval_data = eval_data
+            elif grp == 'male':
+                current_eval_data = male_test_loader
+            else:
+                current_eval_data = female_test_loader
+
+            if isinstance(current_eval_data, FullSortEvalDataLoader):
+                eval_func = self._full_sort_batch_eval
+                if self.item_tensor is None:
+                    self.item_tensor = current_eval_data._dataset.get_item_feature().to(self.device)
+            else:
+                eval_func = self._neg_sample_batch_eval
+            if self.config["eval_type"] == EvaluatorType.RANKING:
+                self.tot_item_num = current_eval_data._dataset.item_num
+
+            iter_data = (
+                tqdm(
+                    current_eval_data,
+                    total=len(current_eval_data),
+                    ncols=100,
+                    desc=set_color(f"Evaluate   ", "pink"),
                 )
-            self.eval_collector.eval_batch_collect(
-                scores, interaction, positive_u, positive_i
+                if show_progress
+                else current_eval_data
             )
-        self.eval_collector.model_collect(self.model)
-        struct = self.eval_collector.get_data_struct()
-        result = self.evaluator.evaluate(struct)
-        if not self.config["single_spec"]:
-            result = self._map_reduce(result, num_sample)
-        #self.wandblogger.log_eval_metrics(result, head="eval")
-        return result
+
+            num_sample = 0
+            for batch_idx, batched_data in enumerate(iter_data):
+                num_sample += len(batched_data)
+                interaction, scores, positive_u, positive_i = eval_func(batched_data)
+                if self.gpu_available and show_progress:
+                    iter_data.set_postfix_str(
+                        set_color("GPU RAM: " + get_gpu_usage(self.device), "yellow")
+                    )
+                self.eval_collector.eval_batch_collect(
+                    scores, interaction, positive_u, positive_i
+                )
+            self.eval_collector.model_collect(self.model)
+
+            # struct with full data (mixed gender info)
+            struct = self.eval_collector.get_data_struct()
+
+            res = self.evaluator.evaluate(struct)
+            if not self.config['single_spec']:
+                #res = self._map_reduce(res, len(idx))
+                res = self._map_reduce(res, num_sample)
+
+            #for grp, res in all_results.items():
+            for metric, val in res.items():
+                # val is -1 only if the metric cannot be calculated for this group
+                # e.g. group-level unfairness metric that's ran only on one gender
+                if val == -1:
+                    continue
+
+                if called_from_fit:
+                    # /valid will be added later when we return to the fit method
+                    to_log[f'{grp}/{metric}'] = val
+                    if metric in self.valid_metric or self.valid_metric in metric:
+                        # need it because early stopping checks for this key
+                        to_log[f'{metric}'] = val
+                else:
+                    to_log[f'eval/{grp}/{metric}'] = val
+
+            if not called_from_fit:
+                self.wandblogger.log_metrics({**to_log}, step=-1)
+
+        return to_log
 
     def _map_reduce(self, result, num_sample):
         gather_result = {}

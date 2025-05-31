@@ -1364,7 +1364,10 @@ class DifferentialFairness(AbstractMetric):
 
         for i in range(len(sst_unique_values)):
             for j in range(i + 1, len(sst_unique_values)):
-                epsilon = np.abs(np.log(score_matric[:, i]) - np.log(score_matric[:, j]))
+                #epsilon = np.abs(np.log(score_matric[:, i]) - np.log(score_matric[:, j]))
+                log_score_i = np.log(np.maximum(score_matric[:, i], 1e-9))  # Clip to a small positive value
+                log_score_j = np.log(np.maximum(score_matric[:, j], 1e-9))  # Clip to a small positive value
+                epsilon = np.abs(log_score_i - log_score_j)
                 epsilon_values = np.where(epsilon > epsilon_values, epsilon, epsilon_values)
 
         return epsilon_values.mean()
