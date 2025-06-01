@@ -293,7 +293,7 @@ def train():
         config_file_list=['conf/model_kg.yaml'],
         config_dict=config_dict,
         model='CKE',
-        dataset='ml-100k',
+        dataset='ml-1m',
     )
     init_seed(config['seed'], config['reproducibility'])
     # init_logger(config)

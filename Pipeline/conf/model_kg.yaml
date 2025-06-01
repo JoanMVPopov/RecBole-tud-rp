@@ -29,7 +29,8 @@ val_interval:               # (dict) Filter inter by values in {value field (str
 # ----------------------------------------------------------------------------
 
 # --- training ---
-epochs: 10
+epochs: 150
+valid_metric: Recall@10
 
 log_wandb: True
 wandb_project: 'recbole-fairness-sweep'

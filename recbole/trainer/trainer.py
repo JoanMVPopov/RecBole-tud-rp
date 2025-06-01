@@ -517,6 +517,7 @@ class Trainer(AbstractTrainer):
 
                 for k,v in valid_result.items():
                     if "recall" in k:
+                    #if "mrr" in k:
                         valid_result_updated[f"Recall@10"] = v
                     valid_result_updated[f"valid/{k}"] = v
 
@@ -623,8 +624,13 @@ class Trainer(AbstractTrainer):
         groups = ['all', 'male', 'female']
         to_log = {}
 
-        male_token = 1
-        female_token = 2
+        # that's for movielens-100k
+        # male_token = 1
+        # female_token = 2
+
+        # movielens-1m
+        male_token = 2
+        female_token = 1
 
         # Step 0: Filter inter_feat based on those user_ids
         inter_feat = eval_data.dataset.inter_feat
@@ -642,8 +648,8 @@ class Trainer(AbstractTrainer):
         user_df = pd.DataFrame(user_feat.numpy())
 
         # Get user IDs by gender
-        male_user_ids = user_df[user_df[gender_field] == 1][uid_field].values
-        female_user_ids = user_df[user_df[gender_field] == 2][uid_field].values
+        male_user_ids = user_df[user_df[gender_field] == male_token][uid_field].values
+        female_user_ids = user_df[user_df[gender_field] == female_token][uid_field].values
 
         # Filter interaction DataFrame
         male_df = inter_df[inter_df[uid_field].isin(male_user_ids)]

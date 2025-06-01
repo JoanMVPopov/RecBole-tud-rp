@@ -6,7 +6,7 @@ import wandb
 api = wandb.Api()
 entity, project = "yoankich-tu-delft-rp", "recbole-fairness-sweep"
 
-sweep = api.sweep(entity + "/" + project + "/m7xt1qek")
+sweep = api.sweep(entity + "/" + project + "/6igigjav")
 sweep_runs = sweep.runs
 
 topk = 10
@@ -42,8 +42,8 @@ df_combined = pd.DataFrame()
 for run in range(len(sweep_runs)):
     # if run == 0:
     #     continue
-    if run > 2:
-        break
+    # if run > 2:
+    #     break
 
     #df = sweep_runs[run].history(keys=["epoch", "train/loss_1", "train/loss_2", "train/loss_3"], x_axis="epoch")
     df = sweep_runs[run].history(keys=eval_keys)
@@ -53,6 +53,7 @@ for run in range(len(sweep_runs)):
 
 print(df_combined)
 
+# COMMON EVAL METRICS
 for metric in metrics:
     if metric != "gauc":
         df_selected = df_combined[["eval/all/" + metric + f"@{topk}", "eval/male/" + metric + f"@{topk}", "eval/female/" + metric + f"@{topk}"]]
@@ -67,3 +68,17 @@ for metric in metrics:
     else:
         plt.title(f"Boxplot for {metric}")
     plt.show()
+
+# FAIRNESS METRICS FOR ALL
+fig, axes = plt.subplots(nrows=1, ncols=len(metrics_all_only), figsize=(20, 5))
+
+for i, metric in enumerate(metrics_all_only):
+    ax = axes[i]
+    column = "eval/all/" + metric
+    df_combined[[column]].boxplot(ax=ax, widths=0.6)
+    ax.set_title(metric)
+    ax.set_ylabel("Value")
+    ax.grid(True)
+
+plt.tight_layout()
+plt.show()

@@ -1,4 +1,5 @@
-method: grid
+#method: grid
+method: bayes
 metric:
   name: Recall@10
   goal: maximize
@@ -9,9 +10,16 @@ command:
   - C:/Users/Yoan/PycharmProjects/RP-TUD-Fork/.venv/Scripts/python.exe
   - pipeline_combined.py
 
+early_terminate:
+  type: hyperband
+  s: 2          # Common values: 2-4
+  eta: 3        # wandb docs use 3
+  max_iter: 150  # equals epochs = 150
+
+# CKE HYPERPARAMETERS
 parameters:
   learning_rate:
-    values: [ 1e-4, 5e-4, 1e-3 ]
+    values: [ 1e-4, 1e-3 ]
   kg_embedding_size:
     values: [ 16, 64, 128 ]
   embedding_size:
@@ -22,7 +30,6 @@ parameters:
   reg_weights:
     # Each entry is a [struct-weight, semantic-weight] pair
     values:
-      - [ 0.1, 0.1 ]
       - [ 0.01, 0.01 ]
       - [ 0.001, 0.001 ]
 
