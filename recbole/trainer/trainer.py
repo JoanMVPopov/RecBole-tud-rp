@@ -516,9 +516,13 @@ class Trainer(AbstractTrainer):
                 valid_result_updated = {}
 
                 for k,v in valid_result.items():
-                    if "recall" in k:
-                    #if "mrr" in k:
-                        valid_result_updated[f"Recall@10"] = v
+                    # if "recall" in k.lower() and 'all' in k.lower():
+                    # #if "mrr" in k:
+                    #     valid_result_updated[f"Recall@10"] = v
+
+                    if k.lower() == self.valid_metric:
+                        valid_result_updated[k.lower()] = v
+                        continue
                     valid_result_updated[f"valid/{k}"] = v
 
                 train_metrics["epoch"] = epoch_idx
@@ -766,8 +770,10 @@ class Trainer(AbstractTrainer):
                 if called_from_fit:
                     # /valid will be added later when we return to the fit method
                     to_log[f'{grp}/{metric}'] = val
-                    if metric in self.valid_metric or self.valid_metric in metric:
+                    if (metric in self.valid_metric or self.valid_metric in metric) and grp=='all':
                         # need it because early stopping checks for this key
+                        print(f"METRIC IS: {metric}")
+                        print(f"VALID METRIC IS: {self.valid_metric}")
                         to_log[f'{metric}'] = val
                 else:
                     to_log[f'eval/{grp}/{metric}'] = val

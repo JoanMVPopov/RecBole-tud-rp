@@ -1,7 +1,7 @@
-#method: grid
-method: bayes
+method: grid
+#method: bayes
 metric:
-  name: Recall@10
+  name: recall@10
   goal: maximize
 
 #program: pipeline_combined.py
@@ -10,11 +10,11 @@ command:
   - C:/Users/Yoan/PycharmProjects/RP-TUD-Fork/.venv/Scripts/python.exe
   - pipeline_combined.py
 
-early_terminate:
-  type: hyperband
-  s: 2          # Common values: 2-4
-  eta: 3        # wandb docs use 3
-  max_iter: 150  # equals epochs = 150
+#early_terminate:
+#  type: hyperband
+#  s: 2          # Common values: 2-4
+#  eta: 3        # wandb docs use 3
+#  max_iter: 150  # equals epochs = 150
 
 # CKE HYPERPARAMETERS
 parameters:
